@@ -50,8 +50,28 @@ CREATE TABLE IF NOT EXISTS issues (
   UNIQUE (project_id, issue_number)
 );
 
+CREATE TABLE IF NOT EXISTS issue_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  author_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  body TEXT NOT NULL CHECK (length(trim(body)) > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS issue_activity (
+  id BIGSERIAL PRIMARY KEY,
+  issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  action VARCHAR(50) NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_issues_project_status ON issues(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_issues_updated_at ON issues(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_created ON issue_comments(issue_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_issue_activity_issue_created ON issue_activity(issue_id, created_at DESC);
