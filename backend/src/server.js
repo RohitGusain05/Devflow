@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { query } from './db.js';
 import authRouter from './routes/auth.js';
+import workspaceRouter from './routes/workspaces.js';
 import { requireAuth } from './middleware/auth.js';
 
 const app = express();
@@ -30,6 +31,7 @@ app.get('/api/health/db', async (_req, res, next) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/workspaces', workspaceRouter);
 
 app.get('/api/auth/me', requireAuth, async (req, res, next) => {
   try {
@@ -56,6 +58,7 @@ app.use((req, res) => {
 
 app.use((err, _req, res, _next) => {
   console.error(err);
+  if (err?.code === '23505') return res.status(409).json({ error: 'Resource already exists' });
   res.status(500).json({ error: 'Internal server error' });
 });
 
