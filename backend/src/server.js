@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { query } from './db.js';
 import authRouter from './routes/auth.js';
 import workspaceRouter from './routes/workspaces.js';
+import issueRouter from './routes/issues.js';
 import { requireAuth } from './middleware/auth.js';
 
 const app = express();
@@ -32,6 +33,7 @@ app.get('/api/health/db', async (_req, res, next) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/workspaces', workspaceRouter);
+app.use('/api', issueRouter);
 
 app.get('/api/auth/me', requireAuth, async (req, res, next) => {
   try {
