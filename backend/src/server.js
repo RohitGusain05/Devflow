@@ -9,16 +9,19 @@ import workspaceRouter from './routes/workspaces.js';
 import issueRouter from './routes/issues.js';
 import commentRouter from './routes/comments.js';
 import { requireAuth } from './middleware/auth.js';
+import { rateLimit } from './middleware/rateLimit.js';
 import { attachRealtime } from './realtime.js';
 
 const app = express();
 const httpServer = http.createServer(app);
 const io = attachRealtime(httpServer);
+const apiRateLimit = rateLimit({ windowSeconds: 60, max: 120, keyPrefix: 'api' });
 
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({ origin: process.env.CLIENT_URL ?? 'http://localhost:5173', credentials: true }));
 app.use(express.json({ limit: '1mb' }));
+app.use('/api', apiRateLimit);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'devflow-api' }));
 app.get('/api/health/db', async (_req, res, next) => {
