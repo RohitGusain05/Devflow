@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 import { signAccessToken } from '../middleware/auth.js';
