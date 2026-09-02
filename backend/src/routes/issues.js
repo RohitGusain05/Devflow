@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { emitProjectEvent } from '../realtime.js';
+import { io } from '../server.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -57,7 +59,6 @@ router.post('/projects/:projectId/issues', async (req, res, next) => {
     }
 
     const issue = await withTransaction(async (client) => {
-      // Serialize issue-number allocation per project to avoid duplicate numbers under concurrency.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [project.id]);
       const next = await client.query(
         `SELECT COALESCE(MAX(issue_number), 0) + 1 AS issue_number FROM issues WHERE project_id = $1`,
@@ -72,9 +73,16 @@ router.post('/projects/:projectId/issues', async (req, res, next) => {
         [project.id, next.rows[0].issue_number, body.data.title, body.data.description ?? null,
           body.data.priority, req.auth.sub, body.data.assigneeId ?? null, body.data.dueAt ?? null],
       );
-      return result.rows[0];
+      const created = result.rows[0];
+      await client.query(
+        `INSERT INTO issue_activity (issue_id, actor_id, action, metadata)
+         VALUES ($1, $2, 'issue_created', jsonb_build_object('issueNumber', $3::int))`,
+        [created.id, req.auth.sub, created.issue_number],
+      );
+      return created;
     });
 
+    emitProjectEvent(io, project.id, 'issue:created', { issue });
     return res.status(201).json({ issue });
   } catch (error) {
     return next(error);
@@ -169,23 +177,39 @@ router.patch('/issues/:issueId', async (req, res, next) => {
 
     const fields = [];
     const params = [];
-    const add = (column, value) => { params.push(value); fields.push(`${column} = $${params.length}`); };
+    const changes = {};
+    const add = (column, value, metadataKey = column) => {
+      params.push(value);
+      fields.push(`${column} = $${params.length}`);
+      changes[metadataKey] = value;
+    };
     if (body.data.title !== undefined) add('title', body.data.title);
     if (body.data.description !== undefined) add('description', body.data.description);
     if (body.data.status !== undefined) add('status', body.data.status);
     if (body.data.priority !== undefined) add('priority', body.data.priority);
-    if (body.data.assigneeId !== undefined) add('assignee_id', body.data.assigneeId);
-    if (body.data.dueAt !== undefined) add('due_at', body.data.dueAt);
+    if (body.data.assigneeId !== undefined) add('assignee_id', body.data.assigneeId, 'assigneeId');
+    if (body.data.dueAt !== undefined) add('due_at', body.data.dueAt, 'dueAt');
     fields.push('updated_at = NOW()');
     params.push(issueId.data);
 
-    const result = await query(
-      `UPDATE issues SET ${fields.join(', ')} WHERE id = $${params.length}
-       RETURNING id, project_id, issue_number, title, description, status, priority,
-                 reporter_id, assignee_id, due_at, created_at, updated_at`,
-      params,
-    );
-    return res.json({ issue: result.rows[0] });
+    const issue = await withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE issues SET ${fields.join(', ')} WHERE id = $${params.length}
+         RETURNING id, project_id, issue_number, title, description, status, priority,
+                   reporter_id, assignee_id, due_at, created_at, updated_at`,
+        params,
+      );
+      const updated = result.rows[0];
+      await client.query(
+        `INSERT INTO issue_activity (issue_id, actor_id, action, metadata)
+         VALUES ($1, $2, 'issue_updated', $3::jsonb)`,
+        [updated.id, req.auth.sub, JSON.stringify(changes)],
+      );
+      return updated;
+    });
+
+    emitProjectEvent(io, current.project_id, 'issue:updated', { issue });
+    return res.json({ issue });
   } catch (error) {
     return next(error);
   }
