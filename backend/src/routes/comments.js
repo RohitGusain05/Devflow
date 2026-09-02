@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { emitProjectEvent } from '../realtime.js';
-import { io } from '../server.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -49,7 +48,7 @@ router.post('/issues/:issueId/comments', async (req, res, next) => {
          VALUES ($1,$2,'comment_added',jsonb_build_object('commentId',$3::text))`, [issueId.data, req.auth.sub, result.rows[0].id]);
       return result.rows[0];
     });
-    emitProjectEvent(io, access.project_id, 'comment:created', { comment });
+    emitProjectEvent(access.project_id, 'comment:created', { comment });
     return res.status(201).json({ comment });
   } catch (error) { return next(error); }
 });
