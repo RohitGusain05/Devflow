@@ -2,6 +2,8 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { query } from './db.js';
 
+let realtimeIO;
+
 function getSecret() {
   const secret = process.env.JWT_ACCESS_SECRET;
   if (!secret) throw new Error('JWT_ACCESS_SECRET is not configured');
@@ -51,9 +53,15 @@ export function attachRealtime(httpServer) {
     });
   });
 
+  realtimeIO = io;
   return io;
 }
 
-export function emitProjectEvent(io, projectId, event, payload) {
-  io.to(`project:${projectId}`).emit(event, payload);
+export function getRealtimeIO() {
+  if (!realtimeIO) throw new Error('Realtime server is not initialized');
+  return realtimeIO;
+}
+
+export function emitProjectEvent(projectId, event, payload) {
+  getRealtimeIO().to(`project:${projectId}`).emit(event, payload);
 }
