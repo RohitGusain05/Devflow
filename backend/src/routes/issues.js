@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { emitProjectEvent } from '../realtime.js';
+import { deleteCacheByPrefix, getCache, setCache } from '../redis.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -43,9 +44,7 @@ router.post('/projects/:projectId/issues', async (req, res, next) => {
   try {
     const project = await projectAccess(projectId.data, req.auth.sub);
     if (!project) return res.status(403).json({ error: 'Project access denied' });
-    if (body.data.assigneeId && !(await userIsMember(project.workspace_id, body.data.assigneeId))) {
-      return res.status(400).json({ error: 'Assignee must belong to the project workspace' });
-    }
+    if (body.data.assigneeId && !(await userIsMember(project.workspace_id, body.data.assigneeId))) return res.status(400).json({ error: 'Assignee must belong to the project workspace' });
     const issue = await withTransaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [project.id]);
       const next = await client.query(`SELECT COALESCE(MAX(issue_number), 0) + 1 AS issue_number FROM issues WHERE project_id = $1`, [project.id]);
@@ -58,6 +57,7 @@ router.post('/projects/:projectId/issues', async (req, res, next) => {
       await client.query(`INSERT INTO issue_activity (issue_id, actor_id, action, metadata) VALUES ($1,$2,'issue_created',jsonb_build_object('issueNumber',$3::int))`, [created.id, req.auth.sub, created.issue_number]);
       return created;
     });
+    await deleteCacheByPrefix(`issues:${project.id}:`);
     emitProjectEvent(project.id, 'issue:created', { issue });
     return res.status(201).json({ issue });
   } catch (error) { return next(error); }
@@ -76,6 +76,11 @@ router.get('/projects/:projectId/issues', async (req, res, next) => {
   try {
     const project = await projectAccess(projectId.data, req.auth.sub);
     if (!project) return res.status(403).json({ error: 'Project access denied' });
+
+    const cacheKey = `issues:${project.id}:${req.auth.sub}:${page}:${limit}:${status ?? ''}:${priority ?? ''}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+
     const params = [projectId.data];
     const filters = ['i.project_id = $1'];
     if (status) { params.push(status); filters.push(`i.status = $${params.length}`); }
@@ -83,7 +88,9 @@ router.get('/projects/:projectId/issues', async (req, res, next) => {
     const count = await query(`SELECT COUNT(*)::int AS total FROM issues i WHERE ${filters.join(' AND ')}`, params);
     params.push(limit, offset);
     const result = await query(`SELECT i.id,i.issue_number,i.title,i.description,i.status,i.priority,i.reporter_id,reporter.name AS reporter_name,i.assignee_id,assignee.name AS assignee_name,i.due_at,i.created_at,i.updated_at FROM issues i JOIN users reporter ON reporter.id=i.reporter_id LEFT JOIN users assignee ON assignee.id=i.assignee_id WHERE ${filters.join(' AND ')} ORDER BY i.issue_number DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
-    return res.json({ issues: result.rows, pagination: { page, limit, total: count.rows[0].total, pages: Math.ceil(count.rows[0].total / limit) } });
+    const response = { issues: result.rows, pagination: { page, limit, total: count.rows[0].total, pages: Math.ceil(count.rows[0].total / limit) } };
+    await setCache(cacheKey, JSON.stringify(response), 30);
+    return res.json(response);
   } catch (error) { return next(error); }
 });
 
@@ -124,6 +131,7 @@ router.patch('/issues/:issueId', async (req, res, next) => {
       await client.query(`INSERT INTO issue_activity (issue_id,actor_id,action,metadata) VALUES ($1,$2,'issue_updated',$3::jsonb)`, [updated.id, req.auth.sub, JSON.stringify(changes)]);
       return updated;
     });
+    await deleteCacheByPrefix(`issues:${current.project_id}:`);
     emitProjectEvent(current.project_id, 'issue:updated', { issue });
     return res.json({ issue });
   } catch (error) { return next(error); }
