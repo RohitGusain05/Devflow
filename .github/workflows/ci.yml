@@ -36,3 +36,40 @@ jobs:
           cache-dependency-path: backend/package.json
       - run: npm install
       - run: npm test
+
+  backend-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: devflow_test
+          POSTGRES_USER: devflow
+          POSTGRES_PASSWORD: devflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devflow -d devflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://devflow:devflow@localhost:5432/devflow_test
+      DATABASE_SSL: false
+      JWT_ACCESS_SECRET: test-secret-that-is-long-enough-for-ci-integration
+      REDIS_URL: ''
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package.json
+      - run: npm install
+      - name: Initialize PostgreSQL schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../database/schema.sql
+      - run: node --test test/integration.test.js
