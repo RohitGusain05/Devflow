@@ -135,6 +135,7 @@ test('lists, updates, and comments on an issue', async () => {
 });
 
 after(async () => {
-  await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  if (workspaceId) await pool.query('DELETE FROM workspaces WHERE id = $1', [workspaceId]);
+  if (userId) await pool.query('DELETE FROM users WHERE id = $1', [userId]);
   await pool.end();
 });
